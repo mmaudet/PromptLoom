@@ -1,0 +1,6 @@
+event: snapshot
+data: {"job_id":"d530aeef-c311-4261-97ed-c8283ff2b503","status":"render_final","language":"en","batch_id":null,"quality_profile":"standard","render_engine":"remotion","production_mode":"technical","progress":55,"current_step":"render_final","error_message":null,"attempt_number":null,"max_attempts":null,"last_repair_reason":null,"substep":null}
+event: snapshot
+data: {"job_id":"b6aa0d34-7b0a-4c87-8540-f707fe991a8e","status":"completed","language":"en","batch_id":null,"quality_profile":"standard","render_engine":"remotion","production_mode":"technical","progress":100,"current_step":"completed","error_message":null,"attempt_number":null,"max_attempts":null,"last_repair_reason":null,"substep":null}
+event: terminal
+data: {"job_id":"b6aa0d34-7b0a-4c87-8540-f707fe991a8e","status":"completed","language":"en","batch_id":null,"quality_profile":"standard","render_engine":"remotion","production_mode":"technical","progress":100,"current_step":"completed","error_message":null,"attempt_number":null,"max_attempts":null,"last_repair_reason":null,"substep":null}
