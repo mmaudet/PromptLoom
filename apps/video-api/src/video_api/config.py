@@ -329,6 +329,15 @@ class Settings:
     )
     openai_tts_format: str = field(default_factory=lambda: os.getenv("VIDEO_API_OPENAI_TTS_FORMAT", "wav"))
     openai_tts_speed: float = field(default_factory=lambda: float(os.getenv("VIDEO_API_OPENAI_TTS_SPEED", "1.0")))
+    # Separate TTS endpoint (falls back to openai_base_url / openai_api_key). Use
+    # this when the OpenAI-compatible TTS lives on a different host than the LLM,
+    # e.g. TTS via qwen_clone_proxy on a GPU box + LLM via OpenRouter.
+    openai_tts_base_url: str | None = field(
+        default_factory=lambda: os.getenv("VIDEO_API_OPENAI_TTS_BASE_URL")
+    )
+    openai_tts_api_key: str | None = field(
+        default_factory=lambda: os.getenv("VIDEO_API_OPENAI_TTS_API_KEY")
+    )
     command_timeout_seconds: int = field(
         default_factory=lambda: int(os.getenv("VIDEO_API_COMMAND_TIMEOUT_SECONDS", "14400"))
     )
