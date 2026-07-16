@@ -1,5 +1,5 @@
 import { useParams, useSearchParams, Link } from "react-router-dom";
-import { ArrowLeft, Download, Layers, X, AlertTriangle, Ban } from "lucide-react";
+import { ArrowLeft, Download, Layers, X, AlertTriangle, Ban, Wrench } from "lucide-react";
 import { useVideo, useCancelVideo } from "../../api/queries";
 import { api, ApiError } from "../../api/client";
 import { Button, Card, Chip, EmptyState, Spinner } from "../../components/ui";
@@ -85,6 +85,11 @@ export function JobPage() {
                 </Chip>
               </Link>
             )}
+            {typeof job.attempt_number === "number" && job.attempt_number > 0 && (
+              <Chip className="bg-amber-50 text-amber">
+                <Wrench className="size-3" /> Réparation {job.attempt_number}/{Math.max(1, (job.max_attempts ?? 1) - 1)}
+              </Chip>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -137,12 +142,39 @@ export function JobPage() {
             <div>
               <p className="font-mono text-xs tracking-wide text-faint uppercase">en cours</p>
               <p className="mt-1 font-display text-2xl font-medium text-ink">{prettyStep(job.current_step)}</p>
+              {job.substep && job.substep.total > 0 && (
+                <p className="mt-1 font-mono text-sm tabular-nums text-muted">
+                  {job.substep.current.toLocaleString("fr-FR")} / {job.substep.total.toLocaleString("fr-FR")}{" "}
+                  {substepUnitLabel(job.substep.unit)}
+                  {typeof job.substep.eta_seconds === "number" && job.substep.eta_seconds > 0 && (
+                    <> — reste {formatDurationShort(job.substep.eta_seconds)}</>
+                  )}
+                </p>
+              )}
             </div>
             <div className="text-right">
-              <p className="font-display text-4xl font-semibold tabular-nums text-brand">{job.progress}%</p>
+              <p className="font-display text-4xl font-semibold tabular-nums text-brand">
+                {job.substep && job.substep.total > 0
+                  ? Math.floor((job.substep.current / job.substep.total) * 100)
+                  : job.progress}
+                %
+              </p>
+              {job.substep && job.substep.total > 0 && (
+                <p className="mt-0.5 font-mono text-[10px] tracking-wide text-faint uppercase">
+                  étape · {job.progress}% global
+                </p>
+              )}
             </div>
           </div>
           <StageRailFull status={job.status} />
+          {job.last_repair_reason && (
+            <div className="mt-5 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2.5 text-xs text-amber">
+              <Wrench className="mt-0.5 size-3.5 shrink-0" />
+              <span className="line-clamp-2">
+                <span className="font-medium">Réparation en cours :</span> {job.last_repair_reason}
+              </span>
+            </div>
+          )}
           <p className="mt-6 flex items-center gap-2 text-xs text-muted">
             <span className="size-1.5 animate-rail-pulse rounded-full bg-brand" />
             Mise à jour automatique en direct
@@ -180,6 +212,29 @@ export function JobPage() {
   );
 }
 
+function substepUnitLabel(unit: string): string {
+  switch (unit) {
+    case "frames":
+      return "frames rendues";
+    case "segments":
+      return "segments audio";
+    case "scenes":
+      return "scènes générées";
+    default:
+      return unit;
+  }
+}
+
+function formatDurationShort(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  if (m < 60) return s > 0 ? `${m}min ${s}s` : `${m}min`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm > 0 ? `${h}h ${rm}min` : `${h}h`;
+}
+
 function OverviewTab({ job }: { job: ReturnType<typeof useVideo>["data"] }) {
   if (!job) return null;
   const rows: { label: string; value: string }[] = [
@@ -193,6 +248,13 @@ function OverviewTab({ job }: { job: ReturnType<typeof useVideo>["data"] }) {
     { label: "Qualité", value: job.quality_profile ?? "—" },
     { label: "Batch", value: job.batch_id ? shortId(job.batch_id) : "—" },
   ];
+  if (typeof job.attempt_number === "number" && job.attempt_number > 0) {
+    const max = Math.max(1, (job.max_attempts ?? 1) - 1);
+    rows.push({ label: "Tentative", value: `${job.attempt_number}/${max}` });
+    if (job.last_repair_reason) {
+      rows.push({ label: "Dernière raison", value: job.last_repair_reason });
+    }
+  }
   return (
     <Card className="divide-y divide-border">
       {rows.map((r) => (

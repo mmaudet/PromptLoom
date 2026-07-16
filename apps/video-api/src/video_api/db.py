@@ -98,6 +98,13 @@ def _ensure_compat_columns() -> None:
         "celery_task_id": "ALTER TABLE video_jobs ADD COLUMN celery_task_id VARCHAR(64)",
         "batch_id": "ALTER TABLE video_jobs ADD COLUMN batch_id VARCHAR(36)",
         "is_primary": "ALTER TABLE video_jobs ADD COLUMN is_primary BOOLEAN NOT NULL DEFAULT TRUE",
+        "attempt_number": "ALTER TABLE video_jobs ADD COLUMN attempt_number INTEGER NOT NULL DEFAULT 0",
+        "max_attempts": "ALTER TABLE video_jobs ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 1",
+        "last_repair_reason": "ALTER TABLE video_jobs ADD COLUMN last_repair_reason TEXT",
+        "substep_unit": "ALTER TABLE video_jobs ADD COLUMN substep_unit VARCHAR(24)",
+        "substep_current": "ALTER TABLE video_jobs ADD COLUMN substep_current INTEGER",
+        "substep_total": "ALTER TABLE video_jobs ADD COLUMN substep_total INTEGER",
+        "substep_eta_seconds": "ALTER TABLE video_jobs ADD COLUMN substep_eta_seconds INTEGER",
     }
     pending = [ddl for column, ddl in migrations.items() if column not in columns]
     if not pending:

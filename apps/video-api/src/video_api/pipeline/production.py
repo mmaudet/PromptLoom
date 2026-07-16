@@ -20,6 +20,7 @@ from video_api.config import (
     strict_final_verify_for_profile,
 )
 from video_api.db import SessionLocal
+from video_api.event_bus import publish_job_snapshot
 from video_api.models import VideoJob
 from video_api.pipeline.commands import CommandRunner
 from video_api.pipeline.engine import make_engine
@@ -27,6 +28,11 @@ from video_api.pipeline.editorial import MotionQualityError, write_editorial_art
 from video_api.pipeline.llm import LLMClient
 from video_api.pipeline.verify import verify_mp4
 from video_api.pipeline.visual_review import VisualReviewer
+from video_api.pipeline.substep import (
+    SubstepReporter,
+    TTSSegmentReporter,
+    parse_remotion_frame,
+)
 from video_api.pipeline.voice import voice_command_for_settings
 from video_api.schemas import VisualReviewResult
 from video_api.schemas import ProductionOptions
@@ -129,8 +135,20 @@ class VideoPipeline:
         job.progress = progress
         job.current_step = step
         job.error_message = error
+        # Every status transition clears any lingering sub-step counter: the
+        # UI would otherwise still show 'frames 4429/4429' during
+        # assemble_final. Individual steps that want a sub-counter re-populate
+        # these columns via SubstepReporter / set_substep while they run.
+        job.substep_unit = None
+        job.substep_current = None
+        job.substep_total = None
+        job.substep_eta_seconds = None
         session.add(job)
         session.commit()
+        # Fan-out to SSE subscribers (Studio, curl consumers, external monitors).
+        # Silent on failure — the DB write is authoritative; the event stream
+        # is a strict advisory that clients can also reconstruct from polling.
+        publish_job_snapshot(job)
         self._step_marks.append((step, time.monotonic()))
         if error:
             logger.error(
@@ -149,6 +167,30 @@ class VideoPipeline:
                 progress,
                 step,
             )
+
+    def _set_attempt_state(
+        self,
+        session: Session,
+        job: VideoJob,
+        attempt_number: int,
+        max_attempts: int,
+        last_repair_reason: str | None = None,
+    ) -> None:
+        """Persist repair-loop metadata to the DB row so the API (and Studio)
+        can display it. Called at the top of each iteration in
+        ``_run_with_repairs`` and again once the repair reason is known.
+
+        ``attempt_number`` is 0 for the first run and increments on every
+        retry. ``max_attempts`` is the ceiling (``settings.max_repair_attempts
+        + 1``). ``last_repair_reason`` is only set when we know it — passing
+        None here preserves the previous value rather than clearing it.
+        """
+        job.attempt_number = attempt_number
+        job.max_attempts = max_attempts
+        if last_repair_reason is not None:
+            job.last_repair_reason = last_repair_reason
+        session.add(job)
+        session.commit()
 
     def _load_master_blueprint(self, session: Session, job: VideoJob) -> dict | None:
         """For a secondary batch job, load the primary sibling's validated
@@ -322,7 +364,8 @@ class VideoPipeline:
     ) -> None:
         last_error: Exception | None = None
         blueprint_data: dict | None = None
-        for attempt in range(self.settings.max_repair_attempts + 1):
+        max_attempts = self.settings.max_repair_attempts + 1
+        for attempt in range(max_attempts):
             try:
                 logger.info(
                     "job.attempt.start job_id=%s attempt=%d max_attempts=%d",
@@ -330,6 +373,7 @@ class VideoPipeline:
                     attempt,
                     self.settings.max_repair_attempts,
                 )
+                self._set_attempt_state(session, job, attempt, max_attempts)
                 if attempt == 0:
                     master = self._load_master_blueprint(session, job)
                     if master is not None:
@@ -380,6 +424,12 @@ class VideoPipeline:
                         repair_hint = last_error.repair_hint()
                     else:
                         repair_hint = f"{type(last_error).__name__}: {last_error}"
+                    # Surface the reason to the API row so the Studio can show
+                    # "Réparation 1/2 — MotionQualityError: ..." instead of a
+                    # silent second planning pass.
+                    self._set_attempt_state(
+                        session, job, attempt, max_attempts, last_repair_reason=repair_hint
+                    )
                     if blueprint is None:
                         blueprint = self.engine.repair_blueprint(
                             job.prompt,
@@ -480,7 +530,23 @@ class VideoPipeline:
                     in {"moss", "moss-tts", "moss_tts", "moss-remote", "moss_remote", "remote-moss"}
                     else "",
                 )
-                runner.run(voice_args, cwd=video_dir, log_name="voice.log", env=voice_env)
+                voice_on_line = None
+                if self.settings.voice_engine.strip().lower() == "openai":
+                    # The openai voice command prints one "Generating ..." line
+                    # per segment, so we can count them against the blueprint's
+                    # scene count. The other engines (chatterbox, kokoro,
+                    # moss[-remote]) don't emit a comparable line yet — a
+                    # follow-up can add per-engine parsers if desired.
+                    voice_on_line = TTSSegmentReporter(
+                        session, job, total_segments=len(blueprint.scenes)
+                    )
+                runner.run(
+                    voice_args,
+                    cwd=video_dir,
+                    log_name="voice.log",
+                    env=voice_env,
+                    on_line=voice_on_line,
+                )
                 logger.info("job.voice.done job_id=%s engine=%s", job.id, self.settings.voice_engine)
 
                 cued_scenes = 0
@@ -550,11 +616,22 @@ class VideoPipeline:
 
                 self._update(session, job, "render_final", 55, "render_final")
                 final_render_quality = render_quality_for_profile(self.quality_profile)
+                render_on_line = None
+                if self.engine.name == "remotion":
+                    # Remotion's renderMedia prints one "Rendered X/Y" line per
+                    # frame; the counter is exactly what the Studio wants. Manim
+                    # doesn't emit a comparable frame counter (its per-scene
+                    # progress bars don't declare a total upfront), so we skip
+                    # substep reporting for it here.
+                    render_on_line = SubstepReporter(
+                        session, job, unit="frames", parse=parse_remotion_frame
+                    )
                 runner.run(
                     ["./render_en.sh"],
                     cwd=video_dir,
                     log_name="render-final.log",
                     env={"QUALITY": final_render_quality},
+                    on_line=render_on_line,
                 )
                 logger.info(
                     "job.render_final.done job_id=%s quality=%s", job.id, final_render_quality
