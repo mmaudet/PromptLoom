@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help doctor config start up down status health logs test test-tts
+.PHONY: help doctor config start up down status health logs test test-tts ci ci-video-api ci-tts-server ci-compose
 
 help:
 	@echo "PromptLoom"
@@ -13,6 +13,19 @@ help:
 	@echo "  make down      Stop the stack without deleting volumes"
 	@echo "  make test      Run video-api tests"
 	@echo "  make test-tts  Run the optional TTS server tests"
+	@echo "  make ci        Reproduce the GitHub Actions CI locally (fresh containers)"
+
+# `make ci` is a local mirror of .github/workflows/ci.yml — runs ruff, py_compile
+# and pytest inside a fresh python:3.11-slim container so cold-CI regressions
+# (fresh venv, small monotonic clock, no local caches) are caught before push.
+ci:
+	@bash scripts/ci-local.sh
+ci-video-api:
+	@bash scripts/ci-local.sh video-api
+ci-tts-server:
+	@bash scripts/ci-local.sh tts-server
+ci-compose:
+	@bash scripts/ci-local.sh compose
 
 doctor:
 	@command -v docker >/dev/null || { echo "Docker is not installed or not in PATH"; exit 1; }
